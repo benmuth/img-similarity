@@ -13,21 +13,23 @@ pub fn main() !void {
 
     const dir_name = "test-images";
 
-    const images = try loadImagesFromDir(allocator, dir_name);
+    const scale: f32 = 0.4;
+    const images = try loadImagesFromDir(allocator, dir_name, scale);
+    const state = State.init(images, scale);
 
     while (!rl.windowShouldClose()) {
         rl.beginDrawing();
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.blue);
-        for (images) |image| {
+        for (state.images) |image| {
             std.debug.print("x: {d}\n", .{image.x});
-            rl.drawTextureEx(image.texture, .{ .x = image.x, .y = 0 }, 0, 0.1, rl.Color.ray_white);
+            rl.drawTextureEx(image.texture, .{ .x = image.x, .y = 0 }, 0, state.scale, rl.Color.ray_white);
         }
     }
 }
 
-fn loadImagesFromDir(allocator: std.mem.Allocator, dir_name: []const u8) ![]Image {
+fn loadImagesFromDir(allocator: std.mem.Allocator, dir_name: []const u8, scale: f32) ![]Image {
     var images = std.ArrayListUnmanaged(Image).empty;
 
     const dir = try std.fs.cwd().openDir(dir_name, .{ .iterate = true });
@@ -42,7 +44,7 @@ fn loadImagesFromDir(allocator: std.mem.Allocator, dir_name: []const u8) ![]Imag
 
         const rl_image = try rl.Image.init(real_path_z);
         if (rl.isImageValid(rl_image)) {
-            const image = try Image.init(rl_image, x * 0.1);
+            const image = try Image.init(rl_image, x * scale);
             try images.append(allocator, image);
             x += @floatFromInt(rl_image.width);
         }
@@ -54,8 +56,16 @@ fn loadImagesFromDir(allocator: std.mem.Allocator, dir_name: []const u8) ![]Imag
 const State = struct {
     image_idx: usize = 0,
     x_offset: u32 = 0,
+    scale: f32 = 1,
 
     images: []Image,
+
+    fn init(images: []Image, scale: f32) State {
+        return .{
+            .images = images,
+            .scale = scale,
+        };
+    }
 };
 
 const Image = struct {
