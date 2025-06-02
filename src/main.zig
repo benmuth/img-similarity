@@ -2,20 +2,72 @@ const std = @import("std");
 const rl = @import("raylib");
 
 pub fn main() !void {
-    rl.initWindow(800, 1000, "hello world!");
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    rl.initWindow(1200, 800, "hello world!");
     defer rl.closeWindow();
 
     rl.setTargetFPS(60);
 
-    const file_name: [:0]const u8 = "test-images/img.jpeg";
-    const image = try rl.Image.init(file_name);
-    const image_texture = try rl.loadTextureFromImage(image);
+    const dir_name = "test-images";
+
+    const images = try loadImagesFromDir(allocator, dir_name);
 
     while (!rl.windowShouldClose()) {
         rl.beginDrawing();
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.blue);
-        rl.drawTextureEx(image_texture, .{ .x = 0, .y = 0 }, 0, 0.35, rl.Color.ray_white);
+        for (images) |image| {
+            std.debug.print("x: {d}\n", .{image.x});
+            rl.drawTextureEx(image.texture, .{ .x = image.x, .y = 0 }, 0, 0.1, rl.Color.ray_white);
+        }
     }
 }
+
+fn loadImagesFromDir(allocator: std.mem.Allocator, dir_name: []const u8) ![]Image {
+    var images = std.ArrayListUnmanaged(Image).empty;
+
+    const dir = try std.fs.cwd().openDir(dir_name, .{ .iterate = true });
+    var walker = try dir.walk(allocator);
+    defer walker.deinit();
+
+    var x: f32 = 0;
+    while (try walker.next()) |entry| {
+        const real_path = try entry.dir.realpathAlloc(allocator, entry.path);
+        const real_path_z = try allocator.dupeZ(u8, real_path);
+        std.debug.print("loading image from path: {s}\n", .{real_path_z});
+
+        const rl_image = try rl.Image.init(real_path_z);
+        if (rl.isImageValid(rl_image)) {
+            const image = try Image.init(rl_image, x * 0.1);
+            try images.append(allocator, image);
+            x += @floatFromInt(rl_image.width);
+        }
+    }
+
+    return try images.toOwnedSlice(allocator);
+}
+
+const State = struct {
+    image_idx: usize = 0,
+    x_offset: u32 = 0,
+
+    images: []Image,
+};
+
+const Image = struct {
+    rl_image: rl.Image,
+    texture: rl.Texture,
+    x: f32,
+
+    fn init(image: rl.Image, x: f32) !Image {
+        return .{
+            .rl_image = image,
+            .texture = try rl.loadTextureFromImage(image),
+            .x = x,
+        };
+    }
+};
