@@ -1,0 +1,12 @@
+.{
+    .name = .img_similarity,
+    .version = "0.0.0",
+    .fingerprint = 0x8ac3d6dd020a7b1d,
+    .dependencies = .{
+        .raylib_zig = .{
+            .url = "https://github.com/Not-Nik/raylib-zig/archive/3bf08a304cfe2baf839705063ff999b8d8bc8c54.tar.gz",
+            .hash = "raylib_zig-5.6.0-dev-KE8REKAqBQAQugfCOjYYVRFOi7iaEJK1EMDcRUq8AOm2",
+        },
+    },
+    .paths = .{ "src", "build.zig", "build.zig.zon" },
+}
