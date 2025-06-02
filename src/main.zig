@@ -1,12 +1,15 @@
 const std = @import("std");
 const rl = @import("raylib");
 
+const width = 1200;
+const height = 800;
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    rl.initWindow(1200, 800, "hello world!");
+    rl.initWindow(width, height, "hello world!");
     defer rl.closeWindow();
 
     rl.setTargetFPS(60);
@@ -15,7 +18,7 @@ pub fn main() !void {
 
     const scale: f32 = 0.4;
     const images = try loadImagesFromDir(allocator, dir_name, scale);
-    var state = State.init(images, scale);
+    var state = State.init(images);
 
     while (!rl.windowShouldClose()) {
         // update
@@ -35,8 +38,7 @@ pub fn main() !void {
 
         rl.clearBackground(rl.Color.blue);
         for (state.images) |image| {
-            std.debug.print("x: {d}\n", .{image.x});
-            rl.drawTextureEx(image.texture, .{ .x = image.x - starting_x, .y = 0 }, 0, state.scale, rl.Color.ray_white);
+            rl.drawTextureEx(image.texture, .{ .x = image.x - starting_x, .y = 0 }, 0, image.scale, rl.Color.ray_white);
         }
     }
 }
@@ -68,14 +70,12 @@ fn loadImagesFromDir(allocator: std.mem.Allocator, dir_name: []const u8, scale: 
 const State = struct {
     image_idx: usize = 0,
     x_offset: u32 = 0,
-    scale: f32 = 1,
 
     images: []Image,
 
-    fn init(images: []Image, scale: f32) State {
+    fn init(images: []Image) State {
         return .{
             .images = images,
-            .scale = scale,
         };
     }
 };
@@ -84,12 +84,26 @@ const Image = struct {
     rl_image: rl.Image,
     texture: rl.Texture,
     x: f32,
+    scale: f32 = 1,
 
     fn init(image: rl.Image, x: f32) !Image {
+        var scale: f32 = undefined;
+        if (image.width > image.height) {
+            // scale to width
+            if (image.width > width) {
+                scale = width / @as(f32, @floatFromInt(image.width));
+            }
+        } else {
+            // scale to height
+            if (image.height > height) {
+                scale = height / @as(f32, @floatFromInt(image.height));
+            }
+        }
         return .{
             .rl_image = image,
             .texture = try rl.loadTextureFromImage(image),
             .x = x,
+            .scale = scale,
         };
     }
 };
