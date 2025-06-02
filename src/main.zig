@@ -9,15 +9,15 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    rl.initWindow(width, height, "hello world!");
+    rl.initWindow(width, height, "Similar images");
     defer rl.closeWindow();
 
     rl.setTargetFPS(60);
 
     const dir_name = "test-images";
 
-    const scale: f32 = 0.4;
-    const images = try loadImagesFromDir(allocator, dir_name, scale);
+    const paths = try pathsFromDir(allocator, dir_name);
+    const images = try imageSetFromPaths(allocator, paths);
     var state = State.init(images);
 
     while (!rl.windowShouldClose()) {
@@ -37,34 +37,8 @@ pub fn main() !void {
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.blue);
-        for (state.images) |image| {
-            rl.drawTextureEx(image.texture, .{ .x = image.x - starting_x, .y = 0 }, 0, image.scale, rl.Color.ray_white);
-        }
+        drawImageSet(state.images, starting_x);
     }
-}
-
-fn loadImagesFromDir(allocator: std.mem.Allocator, dir_name: []const u8, scale: f32) ![]Image {
-    var images = std.ArrayListUnmanaged(Image).empty;
-
-    const dir = try std.fs.cwd().openDir(dir_name, .{ .iterate = true });
-    var walker = try dir.walk(allocator);
-    defer walker.deinit();
-
-    var x: f32 = 0;
-    while (try walker.next()) |entry| {
-        const real_path = try entry.dir.realpathAlloc(allocator, entry.path);
-        const real_path_z = try allocator.dupeZ(u8, real_path);
-        std.debug.print("loading image from path: {s}\n", .{real_path_z});
-
-        const rl_image = try rl.Image.init(real_path_z);
-        if (rl.isImageValid(rl_image)) {
-            const image = try Image.init(rl_image, x * scale);
-            try images.append(allocator, image);
-            x += @floatFromInt(rl_image.width);
-        }
-    }
-
-    return try images.toOwnedSlice(allocator);
 }
 
 const State = struct {
@@ -80,13 +54,24 @@ const State = struct {
     }
 };
 
+/// An image to be displayed in the window
 const Image = struct {
+    // the underlying Raylib image data
     rl_image: rl.Image,
-    texture: rl.Texture,
-    x: f32,
-    scale: f32 = 1,
 
-    fn init(image: rl.Image, x: f32) !Image {
+    // the path to the image
+    path: []const u8,
+
+    // the x offset from the left edge of the first image
+    x: f32,
+
+    // the image as a Raylib texture
+    texture: rl.Texture,
+
+    // the amount each image should be scaled by to have it fit in the window
+    scale: f32,
+
+    fn init(image: rl.Image, path: []const u8, x: f32) !Image {
         var scale: f32 = undefined;
         if (image.width > image.height) {
             // scale to width
@@ -101,9 +86,59 @@ const Image = struct {
         }
         return .{
             .rl_image = image,
-            .texture = try rl.loadTextureFromImage(image),
+            .path = path,
             .x = x,
+            .texture = try rl.loadTextureFromImage(image),
             .scale = scale,
         };
     }
 };
+
+fn drawImageSet(images: []Image, starting_x: f32) void {
+    for (images) |image| {
+        rl.drawTextureEx(image.texture, .{ .x = image.x - starting_x, .y = 0 }, 0, image.scale, rl.Color.ray_white);
+    }
+}
+
+fn pathsFromDir(allocator: std.mem.Allocator, dir_name: []const u8) ![][:0]const u8 {
+    var paths = std.ArrayListUnmanaged([:0]const u8).empty;
+
+    const dir = try std.fs.cwd().openDir(dir_name, .{ .iterate = true });
+    var walker = try dir.walk(allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        const real_path = try entry.dir.realpathAlloc(allocator, entry.path);
+        const real_path_z = try allocator.dupeZ(u8, real_path);
+        try paths.append(allocator, real_path_z);
+    }
+    return paths.toOwnedSlice(allocator);
+}
+
+fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) ![]Image {
+    var images = std.ArrayListUnmanaged(Image).empty;
+
+    var initial_x: f32 = 0;
+    for (paths) |path| {
+        std.debug.print("loading image from path: {s}\n", .{path});
+
+        const rl_image = try rl.Image.init(path);
+        if (rl.isImageValid(rl_image)) {
+            const image = try Image.init(rl_image, path, initial_x);
+            try images.append(allocator, image);
+            initial_x += @as(f32, @floatFromInt(rl_image.width)) * image.scale;
+        } else {
+            std.debug.print("invalid path: {s}\n", .{path});
+        }
+    }
+
+    return try images.toOwnedSlice(allocator);
+}
+
+//
+// image hashing
+//
+
+const HashResult = struct {};
+
+// fn hashImages(images: []Image) void {}
