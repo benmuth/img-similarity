@@ -15,16 +15,28 @@ pub fn main() !void {
 
     const scale: f32 = 0.4;
     const images = try loadImagesFromDir(allocator, dir_name, scale);
-    const state = State.init(images, scale);
+    var state = State.init(images, scale);
 
     while (!rl.windowShouldClose()) {
+        // update
+        if (rl.isKeyPressed(rl.KeyboardKey.left)) {
+            state.image_idx -|= 1;
+        } else if (rl.isKeyPressed(rl.KeyboardKey.right)) {
+            if (state.image_idx < state.images.len - 1) {
+                state.image_idx += 1;
+            }
+        }
+
+        const starting_x = state.images[state.image_idx].x;
+
+        // draw
         rl.beginDrawing();
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.blue);
         for (state.images) |image| {
             std.debug.print("x: {d}\n", .{image.x});
-            rl.drawTextureEx(image.texture, .{ .x = image.x, .y = 0 }, 0, state.scale, rl.Color.ray_white);
+            rl.drawTextureEx(image.texture, .{ .x = image.x - starting_x, .y = 0 }, 0, state.scale, rl.Color.ray_white);
         }
     }
 }
