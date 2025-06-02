@@ -4,18 +4,24 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const main_step = b.addExecutable(.{
-        .name = "main",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
     const raylib_dep = b.dependency("raylib_zig", .{});
     const raylib_artifact = raylib_dep.artifact("raylib");
-    main_step.linkLibrary(raylib_artifact);
 
-    main_step.root_module.addImport("raylib", raylib_dep.module("raylib"));
+    const main_step = b.addExecutable(.{
+        .name = "main",
+        .root_module = b.createModule(
+            .{
+                .root_source_file = b.path("src/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "raylib", .module = raylib_dep.module("raylib") },
+                },
+            },
+        ),
+    });
+
+    main_step.linkLibrary(raylib_artifact);
 
     b.installArtifact(main_step);
     const run_artifact = b.addRunArtifact(main_step);

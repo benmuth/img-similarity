@@ -1,7 +1,7 @@
 const std = @import("std");
 const rl = @import("raylib");
 
-pub fn main() void {
+pub fn main() !void {
     rl.initWindow(800, 600, "hello world!");
     defer rl.closeWindow();
 
@@ -12,5 +12,8 @@ pub fn main() void {
         defer rl.endDrawing();
         rl.clearBackground(rl.Color.blue);
     }
-    std.debug.print("hello world!\n", .{});
+
+    const file_name: [:0]const u8 = "test-images/img.jpeg";
+    const image = try rl.Image.init(file_name);
+    std.debug.print("valid: {}\n", .{rl.isImageValid(image)});
 }
