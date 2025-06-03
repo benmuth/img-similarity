@@ -14,40 +14,50 @@ pub fn main() !void {
 
     rl.setTargetFPS(60);
 
-    const dir_name = "test-images";
+    const paths_1 = try pathsFromDir(allocator, "test-images-1");
+    const paths_2 = try pathsFromDir(allocator, "test-images-2");
 
-    const paths = try pathsFromDir(allocator, dir_name);
-    const images = try imageSetFromPaths(allocator, paths);
-    var state = State.init(images);
+    const image_set_1 = try imageSetFromPaths(allocator, paths_1);
+    const image_set_2 = try imageSetFromPaths(allocator, paths_2);
+    var images: [2][]Image = .{ image_set_1, image_set_2 };
+    // const new_images = try hashImages(images);
+    var state = State.init(images[0..]);
 
     while (!rl.windowShouldClose()) {
         // update
         if (rl.isKeyPressed(rl.KeyboardKey.left)) {
             state.image_idx -|= 1;
         } else if (rl.isKeyPressed(rl.KeyboardKey.right)) {
-            if (state.image_idx < state.images.len - 1) {
+            if (state.image_idx < state.images[0].len - 1) {
                 state.image_idx += 1;
             }
+        } else if (rl.isKeyPressed(rl.KeyboardKey.up)) {
+            state.set_idx -|= 1;
+        } else if (rl.isKeyPressed(rl.KeyboardKey.down)) {
+            if (state.set_idx < state.images.len - 1) {
+                state.set_idx += 1;
+            }
         }
-
-        const starting_x = state.images[state.image_idx].x;
 
         // draw
         rl.beginDrawing();
         defer rl.endDrawing();
 
         rl.clearBackground(rl.Color.blue);
-        drawImageSet(state.images, starting_x);
+
+        drawImageSet(state.images[state.set_idx], state.images[state.set_idx][state.image_idx].x);
     }
 }
 
 const State = struct {
     image_idx: usize = 0,
+    set_idx: usize = 0,
+
     x_offset: u32 = 0,
 
-    images: []Image,
+    images: [][]Image,
 
-    fn init(images: []Image) State {
+    fn init(images: [][]Image) State {
         return .{
             .images = images,
         };
@@ -72,31 +82,41 @@ const Image = struct {
     scale: f32,
 
     fn init(image: rl.Image, path: []const u8, x: f32) !Image {
-        var scale: f32 = undefined;
-        if (image.width > image.height) {
-            // scale to width
-            if (image.width > width) {
-                scale = width / @as(f32, @floatFromInt(image.width));
-            }
-        } else {
-            // scale to height
-            if (image.height > height) {
-                scale = height / @as(f32, @floatFromInt(image.height));
-            }
-        }
         return .{
             .rl_image = image,
             .path = path,
             .x = x,
             .texture = try rl.loadTextureFromImage(image),
-            .scale = scale,
+            .scale = calcImageScale(image),
         };
     }
 };
 
-fn drawImageSet(images: []Image, starting_x: f32) void {
+fn calcImageScale(image: rl.Image) f32 {
+    var scale: f32 = undefined;
+    if (image.width > image.height) {
+        // scale to width
+        if (image.width > width) {
+            scale = width / @as(f32, @floatFromInt(image.width));
+        }
+    } else {
+        // scale to height
+        if (image.height > height) {
+            scale = height / @as(f32, @floatFromInt(image.height));
+        }
+    }
+    return scale;
+}
+
+fn drawImageSet(images: []Image, x_offset: f32) void {
     for (images) |image| {
-        rl.drawTextureEx(image.texture, .{ .x = image.x - starting_x, .y = 0 }, 0, image.scale, rl.Color.ray_white);
+        rl.drawTextureEx(
+            image.texture,
+            .{ .x = image.x - x_offset, .y = 0 },
+            0,
+            image.scale,
+            rl.Color.ray_white,
+        );
     }
 }
 
