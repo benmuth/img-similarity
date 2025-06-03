@@ -18,8 +18,10 @@ pub fn main() !void {
     const paths_2 = try pathsFromDir(allocator, "test-images-2");
 
     const image_set_1 = try imageSetFromPaths(allocator, paths_1);
+    const image_set_1_resize = try reduceSize(allocator, image_set_1);
     const image_set_2 = try imageSetFromPaths(allocator, paths_2);
-    var images: [2][]Image = .{ image_set_1, image_set_2 };
+    const image_set_2_resize = try reduceSize(allocator, image_set_2);
+    var images: [2][]Image = .{ image_set_1_resize, image_set_2_resize };
     // const new_images = try hashImages(images);
     var state = State.init(images[0..]);
 
@@ -165,6 +167,60 @@ fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) ![]Ima
 // image hashing
 //
 
-const HashResult = struct {};
+// a hash steps
+// - [ ]reduce size to an 8x8 square
+// - [ ]convert picture to grayscale
+// - [ ]compute mean value of the 64 colors
+// - [ ]set bits of a 64-bit integer based on whether the pixel is above or below the mean
 
-// fn hashImages(images: []Image) void {}
+fn reduceSize(allocator: std.mem.Allocator, images: []Image) ![]Image {
+    const images_copy = try allocator.dupe(Image, images);
+    std.debug.print("before: \n", .{});
+    printMetadata(images_copy);
+    for (images_copy) |*image| {
+        image.rl_image.resize(8, 8);
+        // const pixels: *[8 * 8 * 3]u8 = @ptrCast(image.rl_image.data);
+        // var new_pixels: [400 * 400 * 3]u8 = undefined;
+        // std.debug.print("pixels: {d}\n", .{pixels});
+        // scaleImage8x8To400x400(pixels, &new_pixels);
+        // std.debug.print("new_pixels: {d}\n", .{new_pixels});
+        // rl.updateTexture(image.texture, @ptrCast(&new_pixels));
+        // /
+        image.rl_image.resizeNN(400, 400);
+        image.texture = try rl.loadTextureFromImage(image.rl_image);
+    }
+
+    // for (images_copy) |*image| {
+
+    // }
+
+    std.debug.print("after: \n", .{});
+    printMetadata(images_copy);
+    return images_copy;
+}
+
+fn printMetadata(images: []Image) void {
+    for (images) |image| {
+        std.debug.print("width: {d}, height: {d}\ntexture_width: {d}, texture_height: {d}\n", .{ image.rl_image.width, image.rl_image.height, image.texture.width, image.texture.height });
+    }
+}
+
+// const HashResult = struct {};
+
+// fn hashImages(allocator: std.mem.Allocator, images: []Image) ![]Image {
+//     for (images) |*image| {
+//         // const image_width = image.rl_image.width;
+//         // const image_height = image.rl_image.height;
+
+//         image.rl_image.resize(8, 8);
+//         var output: [400 * 400 * 3]u8 = undefined;
+//         scaleImage8x8To400x400(@ptrCast(image.rl_image.data), &output);
+
+//         image.texture = try rl.loadTextureFromImage(image.rl_image);
+//         rl.updateTexture(image.texture, &output);
+//         image.scale = calcImageScale(image.rl_image);
+//         std.debug.print("image: {}\n", .{image});
+//     }
+
+//     return images;
+// }
