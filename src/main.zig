@@ -33,9 +33,15 @@ pub fn main() !void {
             }
         } else if (rl.isKeyPressed(rl.KeyboardKey.up)) {
             state.set_idx -|= 1;
+            if (state.image_idx >= state.images[state.set_idx].len) {
+                state.image_idx = state.images[state.set_idx].len - 1;
+            }
         } else if (rl.isKeyPressed(rl.KeyboardKey.down)) {
             if (state.set_idx < state.images.len - 1) {
                 state.set_idx += 1;
+                if (state.image_idx >= state.images[state.set_idx].len) {
+                    state.image_idx = state.images[state.set_idx].len - 1;
+                }
             }
         }
 
