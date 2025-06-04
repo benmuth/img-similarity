@@ -4,7 +4,7 @@ const rl = @import("raylib");
 const width = 1200;
 const height = 800;
 
-pub fn main() void {
+pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -16,12 +16,12 @@ pub fn main() void {
 
     const paths_1 = pathsFromDir(allocator, "test-images-1");
 
-    const image_set_1 = imageSetFromPaths(allocator, paths_1);
+    var images = std.ArrayListUnmanaged([]Image).empty;
 
-    const image_set_2 = applyStep(allocator, image_set_1, reduceSize);
+    try images.append(allocator, imageSetFromPaths(allocator, paths_1));
+    try images.append(allocator, applyStep(allocator, images.items[0], reduceSize));
 
-    var images: [2][]Image = .{ image_set_1, image_set_2 };
-    var state = State.init(images[0..]);
+    var state = State.init(images.items);
 
     while (!rl.windowShouldClose()) {
         // update
