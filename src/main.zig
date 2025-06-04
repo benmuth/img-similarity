@@ -15,13 +15,10 @@ pub fn main() void {
     rl.setTargetFPS(60);
 
     const paths_1 = pathsFromDir(allocator, "test-images-1");
-    const paths_2 = pathsFromDir(allocator, "test-images-2");
 
     const image_set_1 = imageSetFromPaths(allocator, paths_1);
-    const image_set_2 = imageSetFromPaths(allocator, paths_2);
 
-    reduceSize(image_set_1);
-    reduceSize(image_set_2);
+    const image_set_2 = applyStep(allocator, image_set_1, reduceSize);
 
     var images: [2][]Image = .{ image_set_1, image_set_2 };
     var state = State.init(images[0..]);
@@ -193,6 +190,15 @@ fn updateImages(images: []Image) void {
         image.scale = calcImageScale(image.rl_image);
         x_offset += (@as(f32, @floatFromInt(image.texture.width)) * image.scale);
     }
+}
+
+// creates a copy of the image set and applies a transformation, to be displayed
+fn applyStep(allocator: std.mem.Allocator, images: []Image, transform: *const fn ([]Image) void) []Image {
+    const copy = allocator.dupe(Image, images) catch |err|
+        fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+
+    transform(copy);
+    return copy;
 }
 
 //
