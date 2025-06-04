@@ -23,11 +23,7 @@ pub fn main() void {
     const image_set_1_resize = reduceSize(allocator, image_set_1);
     const image_set_2_resize = reduceSize(allocator, image_set_2);
 
-    std.debug.print("image: {any}\n", .{image_set_2_resize});
-
     var images: [2][]Image = .{ image_set_1_resize, image_set_2_resize };
-    // var images: [2][]Image = .{ image_set_1, image_set_2 };
-    // const new_images = hashImages(images);
     var state = State.init(images[0..]);
 
     while (!rl.windowShouldClose()) {
@@ -65,8 +61,6 @@ pub fn main() void {
 const State = struct {
     image_idx: usize = 0,
     set_idx: usize = 0,
-
-    x_offset: u32 = 0,
 
     images: [][]Image,
 
@@ -139,6 +133,7 @@ fn pathsFromDir(allocator: std.mem.Allocator, dir_name: []const u8) [][:0]const 
 
     const dir = std.fs.cwd().openDir(dir_name, .{ .iterate = true }) catch |err|
         fatal(.bad_file, "Failed to open dir {s}: {s}\n", .{ dir_name, @errorName(err) });
+
     var walker = dir.walk(allocator) catch |err|
         fatal(.bad_file, "Failed to walk dir {s}: {s}\n", .{ dir_name, @errorName(err) });
     defer walker.deinit();
@@ -150,14 +145,16 @@ fn pathsFromDir(allocator: std.mem.Allocator, dir_name: []const u8) [][:0]const 
     )) |entry| {
         const real_path = entry.dir.realpathAlloc(allocator, entry.path) catch |err|
             fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+
         const real_path_z = allocator.dupeZ(u8, real_path) catch |err|
             fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+
         paths.append(allocator, real_path_z) catch |err|
             fatal(.no_space_left, "Faild to append path {s} to list: {s}", .{ real_path_z, @errorName(err) });
     }
-    const paths_slice = paths.toOwnedSlice(allocator) catch |err|
+
+    return paths.toOwnedSlice(allocator) catch |err|
         fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
-    return paths_slice;
 }
 
 fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []Image {
@@ -169,13 +166,15 @@ fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []Imag
 
         const rl_image = rl.Image.init(path) catch |err|
             fatal(.bad_file, "Failed to load image {s}: {s}", .{ path, @errorName(err) });
+
         if (rl.isImageValid(rl_image)) {
             const image = Image.init(rl_image, path, initial_x);
             images.append(allocator, image) catch |err|
                 fatal(.no_space_left, "Failed to append image to list: {s}", .{@errorName(err)});
+
             initial_x += @as(f32, @floatFromInt(rl_image.width)) * image.scale;
         } else {
-            std.debug.print("invalid path: {s}\n", .{path});
+            fatal(.bad_file, "invalid path: {s}", .{path});
         }
     }
 
@@ -183,7 +182,7 @@ fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []Imag
         fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 }
 
-// updates the images' x offset based on their new size
+// updates the images' display attributes
 fn updateImages(allocator: std.mem.Allocator, images: []Image) []Image {
     const new_images = allocator.dupe(Image, images) catch |err|
         fatal(.no_space_left, "Failed to duplicate images: {s}", .{@errorName(err)});
@@ -193,20 +192,8 @@ fn updateImages(allocator: std.mem.Allocator, images: []Image) []Image {
         image.x = x_offset;
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
-        var scale = calcImageScale(image.rl_image);
-        if (scale < 1e-6) {
-            std.debug.print("TOO SMALL!\n", .{});
-            var copy = rl.imageCopy(image.rl_image);
-            copy.resizeNN(height, height);
-            // std.debug.print("copy size: {d} {d}", .{ width, height });
-            scale = calcImageScale(copy);
-            std.debug.print("new scale: {d}", .{scale});
-            // std.debug.print("img data: {any}\n", .{copy});
-            image.texture = rl.loadTextureFromImage(copy) catch |err|
-                fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
-        }
-        image.scale = scale;
-        std.debug.print("size: {d}, scale: {d}\n", .{ image.rl_image.width, scale });
+
+        image.scale = calcImageScale(image.rl_image);
         x_offset += (@as(f32, @floatFromInt(image.texture.width)) * image.scale);
     }
     return new_images;
@@ -225,7 +212,6 @@ fn updateImages(allocator: std.mem.Allocator, images: []Image) []Image {
 fn reduceSize(allocator: std.mem.Allocator, images: []Image) []Image {
     const images_copy = allocator.dupe(Image, images) catch |err|
         fatal(.no_space_left, "Failed to duplicate images: {s}", .{@errorName(err)});
-    std.debug.print("before: \n", .{});
     printMetadata(images_copy);
     for (images_copy) |*image| {
         image.rl_image.resize(8, 8);
@@ -234,7 +220,6 @@ fn reduceSize(allocator: std.mem.Allocator, images: []Image) []Image {
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
 
-    std.debug.print("after: \n", .{});
     printMetadata(images_copy);
 
     const updated_images = updateImages(allocator, images_copy);
@@ -247,27 +232,6 @@ fn printMetadata(images: []Image) void {
         std.debug.print("width: {d}, height: {d}\ntexture_width: {d}, texture_height: {d}\n", .{ image.rl_image.width, image.rl_image.height, image.texture.width, image.texture.height });
     }
 }
-
-// const HashResult = struct {};
-
-// fn hashImages(allocator: std.mem.Allocator, images: []Image) ![]Image {
-//     for (images) |*image| {
-//         // const image_width = image.rl_image.width;
-//         // const image_height = image.rl_image.height;
-
-//         image.rl_image.resize(8, 8);
-//         var output: [400 * 400 * 3]u8 = undefined;
-//         scaleImage8x8To400x400(@ptrCast(image.rl_image.data), &output);
-
-//         image.texture = try rl.loadTextureFromImage(image.rl_image);
-//         rl.updateTexture(image.texture, &output);
-//         image.scale = calcImageScale(image.rl_image);
-//         std.debug.print("image: {}\n", .{image});
-//     }
-
-//     return images;
-// }
-//
 
 const FatalReason = enum(u8) {
     cli = 1,
