@@ -163,11 +163,24 @@ fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) ![]Ima
     return try images.toOwnedSlice(allocator);
 }
 
+// updates the images' x offset based on their new size
+fn updateImages(allocator: std.mem.Allocator, images: []Image) ![]Image {
+    const new_images = try allocator.dupe(Image, images);
+
+    var x_offset: f32 = 0;
+    for (new_images) |*image| {
+        image.x = x_offset;
+        x_offset += @floatFromInt(image.rl_image.width);
+        image.texture = try rl.loadTextureFromImage(image.rl_image);
+    }
+    return new_images;
+}
+
 //
 // image hashing
 //
 
-// a hash steps
+// aHash steps
 // - [ ]reduce size to an 8x8 square
 // - [ ]convert picture to grayscale
 // - [ ]compute mean value of the 64 colors
@@ -179,24 +192,16 @@ fn reduceSize(allocator: std.mem.Allocator, images: []Image) ![]Image {
     printMetadata(images_copy);
     for (images_copy) |*image| {
         image.rl_image.resize(8, 8);
-        // const pixels: *[8 * 8 * 3]u8 = @ptrCast(image.rl_image.data);
-        // var new_pixels: [400 * 400 * 3]u8 = undefined;
-        // std.debug.print("pixels: {d}\n", .{pixels});
-        // scaleImage8x8To400x400(pixels, &new_pixels);
-        // std.debug.print("new_pixels: {d}\n", .{new_pixels});
-        // rl.updateTexture(image.texture, @ptrCast(&new_pixels));
-        // /
         image.rl_image.resizeNN(400, 400);
         image.texture = try rl.loadTextureFromImage(image.rl_image);
     }
 
-    // for (images_copy) |*image| {
-
-    // }
-
     std.debug.print("after: \n", .{});
     printMetadata(images_copy);
-    return images_copy;
+
+    const updated_images = try updateImages(allocator, images_copy);
+
+    return updated_images;
 }
 
 fn printMetadata(images: []Image) void {
