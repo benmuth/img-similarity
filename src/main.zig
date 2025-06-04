@@ -20,10 +20,10 @@ pub fn main() void {
     const image_set_1 = imageSetFromPaths(allocator, paths_1);
     const image_set_2 = imageSetFromPaths(allocator, paths_2);
 
-    const image_set_1_resize = reduceSize(allocator, image_set_1);
-    const image_set_2_resize = reduceSize(allocator, image_set_2);
+    reduceSize(image_set_1);
+    reduceSize(image_set_2);
 
-    var images: [2][]Image = .{ image_set_1_resize, image_set_2_resize };
+    var images: [2][]Image = .{ image_set_1, image_set_2 };
     var state = State.init(images[0..]);
 
     while (!rl.windowShouldClose()) {
@@ -183,12 +183,9 @@ fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []Imag
 }
 
 // updates the images' display attributes
-fn updateImages(allocator: std.mem.Allocator, images: []Image) []Image {
-    const new_images = allocator.dupe(Image, images) catch |err|
-        fatal(.no_space_left, "Failed to duplicate images: {s}", .{@errorName(err)});
-
+fn updateImages(images: []Image) void {
     var x_offset: f32 = 0;
-    for (new_images) |*image| {
+    for (images) |*image| {
         image.x = x_offset;
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
@@ -196,7 +193,6 @@ fn updateImages(allocator: std.mem.Allocator, images: []Image) []Image {
         image.scale = calcImageScale(image.rl_image);
         x_offset += (@as(f32, @floatFromInt(image.texture.width)) * image.scale);
     }
-    return new_images;
 }
 
 //
@@ -209,20 +205,15 @@ fn updateImages(allocator: std.mem.Allocator, images: []Image) []Image {
 // - [ ]compute mean value of the 64 colors
 // - [ ]set bits of a 64-bit integer based on whether the pixel is above or below the mean
 
-fn reduceSize(allocator: std.mem.Allocator, images: []Image) []Image {
-    const images_copy = allocator.dupe(Image, images) catch |err|
-        fatal(.no_space_left, "Failed to duplicate images: {s}", .{@errorName(err)});
-    printMetadata(images_copy);
-    for (images_copy) |*image| {
+fn reduceSize(images: []Image) void {
+    for (images) |*image| {
         image.rl_image.resize(8, 8);
         // image.rl_image.resizeNN(400, 400);
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
 
-    printMetadata(images_copy);
-
-    const updated_images = updateImages(allocator, images_copy);
+    const updated_images = updateImages(images);
 
     return updated_images;
 }
