@@ -18,10 +18,15 @@ pub fn main() void {
     const paths_2 = pathsFromDir(allocator, "test-images-2");
 
     const image_set_1 = imageSetFromPaths(allocator, paths_1);
-    const image_set_1_resize = reduceSize(allocator, image_set_1);
     const image_set_2 = imageSetFromPaths(allocator, paths_2);
+
+    const image_set_1_resize = reduceSize(allocator, image_set_1);
     const image_set_2_resize = reduceSize(allocator, image_set_2);
+
+    std.debug.print("image: {any}\n", .{image_set_2_resize});
+
     var images: [2][]Image = .{ image_set_1_resize, image_set_2_resize };
+    // var images: [2][]Image = .{ image_set_1, image_set_2 };
     // const new_images = hashImages(images);
     var state = State.init(images[0..]);
 
@@ -102,15 +107,15 @@ const Image = struct {
 };
 
 fn calcImageScale(image: rl.Image) f32 {
-    var scale: f32 = undefined;
+    var scale: f32 = 1;
     if (image.width > image.height) {
         // scale to width
-        if (image.width > width) {
+        if (image.width != width) {
             scale = width / @as(f32, @floatFromInt(image.width));
         }
     } else {
         // scale to height
-        if (image.height > height) {
+        if (image.height != height) {
             scale = height / @as(f32, @floatFromInt(image.height));
         }
     }
@@ -186,9 +191,23 @@ fn updateImages(allocator: std.mem.Allocator, images: []Image) []Image {
     var x_offset: f32 = 0;
     for (new_images) |*image| {
         image.x = x_offset;
-        x_offset += @floatFromInt(image.rl_image.width);
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
+        var scale = calcImageScale(image.rl_image);
+        if (scale < 1e-6) {
+            std.debug.print("TOO SMALL!\n", .{});
+            var copy = rl.imageCopy(image.rl_image);
+            copy.resizeNN(height, height);
+            // std.debug.print("copy size: {d} {d}", .{ width, height });
+            scale = calcImageScale(copy);
+            std.debug.print("new scale: {d}", .{scale});
+            // std.debug.print("img data: {any}\n", .{copy});
+            image.texture = rl.loadTextureFromImage(copy) catch |err|
+                fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
+        }
+        image.scale = scale;
+        std.debug.print("size: {d}, scale: {d}\n", .{ image.rl_image.width, scale });
+        x_offset += (@as(f32, @floatFromInt(image.texture.width)) * image.scale);
     }
     return new_images;
 }
@@ -210,7 +229,7 @@ fn reduceSize(allocator: std.mem.Allocator, images: []Image) []Image {
     printMetadata(images_copy);
     for (images_copy) |*image| {
         image.rl_image.resize(8, 8);
-        image.rl_image.resizeNN(400, 400);
+        // image.rl_image.resizeNN(400, 400);
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
