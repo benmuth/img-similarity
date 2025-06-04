@@ -20,6 +20,7 @@ pub fn main() !void {
 
     try images.append(allocator, imageSetFromPaths(allocator, paths_1));
     try images.append(allocator, applyStep(allocator, images.items[0], reduceSize));
+    try images.append(allocator, applyStep(allocator, images.items[1], convertToGrayscale));
 
     var state = State.init(images.items);
 
@@ -206,8 +207,8 @@ fn applyStep(allocator: std.mem.Allocator, images: []Image, transform: *const fn
 //
 
 // aHash steps
-// - [ ]reduce size to an 8x8 square
-// - [ ]convert picture to grayscale
+// - [x]reduce size to an 8x8 square
+// - [x]convert picture to grayscale
 // - [ ]compute mean value of the 64 colors
 // - [ ]set bits of a 64-bit integer based on whether the pixel is above or below the mean
 
@@ -219,9 +220,15 @@ fn reduceSize(images: []Image) void {
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
 
-    const updated_images = updateImages(images);
+    updateImages(images);
+}
 
-    return updated_images;
+fn convertToGrayscale(images: []Image) void {
+    for (images) |*image| {
+        image.rl_image.grayscale();
+        image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
+    }
 }
 
 fn printMetadata(images: []Image) void {
