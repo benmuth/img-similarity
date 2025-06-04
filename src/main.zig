@@ -4,7 +4,7 @@ const rl = @import("raylib");
 const width = 1200;
 const height = 800;
 
-pub fn main() !void {
+pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -14,15 +14,15 @@ pub fn main() !void {
 
     rl.setTargetFPS(60);
 
-    const paths_1 = try pathsFromDir(allocator, "test-images-1");
-    const paths_2 = try pathsFromDir(allocator, "test-images-2");
+    const paths_1 = pathsFromDir(allocator, "test-images-1");
+    const paths_2 = pathsFromDir(allocator, "test-images-2");
 
-    const image_set_1 = try imageSetFromPaths(allocator, paths_1);
-    const image_set_1_resize = try reduceSize(allocator, image_set_1);
-    const image_set_2 = try imageSetFromPaths(allocator, paths_2);
-    const image_set_2_resize = try reduceSize(allocator, image_set_2);
+    const image_set_1 = imageSetFromPaths(allocator, paths_1);
+    const image_set_1_resize = reduceSize(allocator, image_set_1);
+    const image_set_2 = imageSetFromPaths(allocator, paths_2);
+    const image_set_2_resize = reduceSize(allocator, image_set_2);
     var images: [2][]Image = .{ image_set_1_resize, image_set_2_resize };
-    // const new_images = try hashImages(images);
+    // const new_images = hashImages(images);
     var state = State.init(images[0..]);
 
     while (!rl.windowShouldClose()) {
@@ -89,12 +89,13 @@ const Image = struct {
     // the amount each image should be scaled by to have it fit in the window
     scale: f32,
 
-    fn init(image: rl.Image, path: []const u8, x: f32) !Image {
+    fn init(image: rl.Image, path: []const u8, x: f32) Image {
         return .{
             .rl_image = image,
             .path = path,
             .x = x,
-            .texture = try rl.loadTextureFromImage(image),
+            .texture = rl.loadTextureFromImage(image) catch |err|
+                fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ path, @errorName(err) }),
             .scale = calcImageScale(image),
         };
     }
@@ -128,50 +129,66 @@ fn drawImageSet(images: []Image, x_offset: f32) void {
     }
 }
 
-fn pathsFromDir(allocator: std.mem.Allocator, dir_name: []const u8) ![][:0]const u8 {
+fn pathsFromDir(allocator: std.mem.Allocator, dir_name: []const u8) [][:0]const u8 {
     var paths = std.ArrayListUnmanaged([:0]const u8).empty;
 
-    const dir = try std.fs.cwd().openDir(dir_name, .{ .iterate = true });
-    var walker = try dir.walk(allocator);
+    const dir = std.fs.cwd().openDir(dir_name, .{ .iterate = true }) catch |err|
+        fatal(.bad_file, "Failed to open dir {s}: {s}\n", .{ dir_name, @errorName(err) });
+    var walker = dir.walk(allocator) catch |err|
+        fatal(.bad_file, "Failed to walk dir {s}: {s}\n", .{ dir_name, @errorName(err) });
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
-        const real_path = try entry.dir.realpathAlloc(allocator, entry.path);
-        const real_path_z = try allocator.dupeZ(u8, real_path);
-        try paths.append(allocator, real_path_z);
+    while (walker.next() catch |err| fatal(
+        .bad_file,
+        "Failed to iterate through dir {s}: {s}",
+        .{ dir_name, @errorName(err) },
+    )) |entry| {
+        const real_path = entry.dir.realpathAlloc(allocator, entry.path) catch |err|
+            fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+        const real_path_z = allocator.dupeZ(u8, real_path) catch |err|
+            fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+        paths.append(allocator, real_path_z) catch |err|
+            fatal(.no_space_left, "Faild to append path {s} to list: {s}", .{ real_path_z, @errorName(err) });
     }
-    return paths.toOwnedSlice(allocator);
+    const paths_slice = paths.toOwnedSlice(allocator) catch |err|
+        fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+    return paths_slice;
 }
 
-fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) ![]Image {
+fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []Image {
     var images = std.ArrayListUnmanaged(Image).empty;
 
     var initial_x: f32 = 0;
     for (paths) |path| {
         std.debug.print("loading image from path: {s}\n", .{path});
 
-        const rl_image = try rl.Image.init(path);
+        const rl_image = rl.Image.init(path) catch |err|
+            fatal(.bad_file, "Failed to load image {s}: {s}", .{ path, @errorName(err) });
         if (rl.isImageValid(rl_image)) {
-            const image = try Image.init(rl_image, path, initial_x);
-            try images.append(allocator, image);
+            const image = Image.init(rl_image, path, initial_x);
+            images.append(allocator, image) catch |err|
+                fatal(.no_space_left, "Failed to append image to list: {s}", .{@errorName(err)});
             initial_x += @as(f32, @floatFromInt(rl_image.width)) * image.scale;
         } else {
             std.debug.print("invalid path: {s}\n", .{path});
         }
     }
 
-    return try images.toOwnedSlice(allocator);
+    return images.toOwnedSlice(allocator) catch |err|
+        fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 }
 
 // updates the images' x offset based on their new size
-fn updateImages(allocator: std.mem.Allocator, images: []Image) ![]Image {
-    const new_images = try allocator.dupe(Image, images);
+fn updateImages(allocator: std.mem.Allocator, images: []Image) []Image {
+    const new_images = allocator.dupe(Image, images) catch |err|
+        fatal(.no_space_left, "Failed to duplicate images: {s}", .{@errorName(err)});
 
     var x_offset: f32 = 0;
     for (new_images) |*image| {
         image.x = x_offset;
         x_offset += @floatFromInt(image.rl_image.width);
-        image.texture = try rl.loadTextureFromImage(image.rl_image);
+        image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
     return new_images;
 }
@@ -186,20 +203,22 @@ fn updateImages(allocator: std.mem.Allocator, images: []Image) ![]Image {
 // - [ ]compute mean value of the 64 colors
 // - [ ]set bits of a 64-bit integer based on whether the pixel is above or below the mean
 
-fn reduceSize(allocator: std.mem.Allocator, images: []Image) ![]Image {
-    const images_copy = try allocator.dupe(Image, images);
+fn reduceSize(allocator: std.mem.Allocator, images: []Image) []Image {
+    const images_copy = allocator.dupe(Image, images) catch |err|
+        fatal(.no_space_left, "Failed to duplicate images: {s}", .{@errorName(err)});
     std.debug.print("before: \n", .{});
     printMetadata(images_copy);
     for (images_copy) |*image| {
         image.rl_image.resize(8, 8);
         image.rl_image.resizeNN(400, 400);
-        image.texture = try rl.loadTextureFromImage(image.rl_image);
+        image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
 
     std.debug.print("after: \n", .{});
     printMetadata(images_copy);
 
-    const updated_images = try updateImages(allocator, images_copy);
+    const updated_images = updateImages(allocator, images_copy);
 
     return updated_images;
 }
@@ -229,3 +248,23 @@ fn printMetadata(images: []Image) void {
 
 //     return images;
 // }
+//
+
+const FatalReason = enum(u8) {
+    cli = 1,
+    no_space_left = 2,
+    bad_file = 3,
+    unknown_command = 4,
+
+    fn exit_status(reason: FatalReason) u8 {
+        return @intFromEnum(reason);
+    }
+};
+
+// taken from TigerBeetle (https://ziggit.dev/t/handling-out-of-memory-errors/10224/4)
+pub fn fatal(reason: FatalReason, comptime fmt: []const u8, args: anytype) noreturn {
+    std.log.err(fmt, args);
+    const status = reason.exit_status();
+    std.debug.assert(status != 0);
+    std.process.exit(status);
+}
