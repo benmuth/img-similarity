@@ -26,6 +26,9 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(main_step);
     const run_artifact = b.addRunArtifact(main_step);
     run_artifact.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_artifact.addArgs(args);
+    }
 
     const run_step = b.step("run", "run the app");
     run_step.dependOn(&run_artifact.step);

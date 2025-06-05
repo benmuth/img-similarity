@@ -82,16 +82,21 @@ pub fn main() !void {
 }
 
 fn runGuiMode(allocator: std.mem.Allocator, directory: []const u8) !void {
+    std.debug.print("running GUI for directory: {s}\n", .{directory});
+
     rl.initWindow(width, height, "Similar images");
     defer rl.closeWindow();
 
     rl.setTargetFPS(60);
 
-    const paths_1 = pathsFromDir(allocator, directory);
+    const paths = pathsFromDir(allocator, directory);
+    if (paths.len == 0) {
+        fatal(.bad_file, "No valid paths in {s}", .{directory});
+    }
 
     var images = std.ArrayListUnmanaged([]Image).empty;
 
-    try images.append(allocator, imageSetFromPaths(allocator, paths_1));
+    try images.append(allocator, imageSetFromPaths(allocator, paths));
     try images.append(allocator, applyStep(allocator, images.items[0], reduceSize));
     try images.append(allocator, applyStep(allocator, images.items[1], convertToGrayscale));
     try images.append(allocator, applyStep(allocator, images.items[2], makeHashImages));
@@ -137,6 +142,10 @@ fn runShowStepsMode(allocator: std.mem.Allocator, directory: []const u8) !void {
 
 fn runFastMode(allocator: std.mem.Allocator, directory: []const u8) !void {
     const paths = pathsFromDir(allocator, directory);
+    if (paths.len == 0) {
+        fatal(.bad_file, "No valid paths in {s}", .{directory});
+    }
+
     const hashes = try computeImageHashes(allocator, paths);
 
     for (paths, hashes) |path, hash| {
@@ -169,7 +178,7 @@ fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) ![]u6
     // Apply transformations in sequence (same as GUI pipeline)
     // Step 1: Reduce size to 8x8
     for (rl_images.items) |*img| {
-        img.resize(8, 8);
+        img.resizeNN(8, 8);
     }
 
     // Step 2: Convert to grayscale
@@ -286,6 +295,11 @@ fn pathsFromDir(allocator: std.mem.Allocator, dir_name: []const u8) [][:0]const 
         const real_path = entry.dir.realpathAlloc(allocator, entry.path) catch |err|
             fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 
+        if (!supportedFormat(real_path)) {
+            std.log.info("Unsupported format: skipping {s}", .{real_path});
+            continue;
+        }
+
         const real_path_z = allocator.dupeZ(u8, real_path) catch |err|
             fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 
@@ -367,7 +381,7 @@ fn applyStep(allocator: std.mem.Allocator, images: []Image, transform: *const fn
 
 fn reduceSize(images: []Image) void {
     for (images) |*image| {
-        image.rl_image.resize(8, 8);
+        image.rl_image.resizeNN(8, 8);
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
@@ -421,6 +435,32 @@ fn printMetadata(images: []Image) void {
     for (images) |image| {
         std.debug.print("width: {d}, height: {d}\ntexture_width: {d}, texture_height: {d}\nformat: {s}\n", .{ image.rl_image.width, image.rl_image.height, image.texture.width, image.texture.height, @tagName(image.rl_image.format) });
     }
+}
+
+fn supportedFormat(path: []u8) bool {
+    const ext_start = std.mem.lastIndexOfScalar(u8, path, '.') orelse return false;
+    const lower_extension = std.ascii.lowerString(path[ext_start + 1 ..], path[ext_start + 1 ..]);
+
+    const supported_img_formats: [10][]const u8 = .{
+        "png",
+        "bmp",
+        "tga",
+        "jpg",
+        "jpeg",
+        "gif",
+        "pic",
+        "hdr",
+        "pnm",
+        "psd",
+    };
+
+    for (supported_img_formats) |format| {
+        if (std.mem.eql(u8, lower_extension, format)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 const FatalReason = enum(u8) {
