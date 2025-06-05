@@ -21,7 +21,7 @@ pub fn main() !void {
     try images.append(allocator, imageSetFromPaths(allocator, paths_1));
     try images.append(allocator, applyStep(allocator, images.items[0], reduceSize));
     try images.append(allocator, applyStep(allocator, images.items[1], convertToGrayscale));
-    try images.append(allocator, applyStep(allocator, images.items[2], computeBits));
+    try images.append(allocator, applyStep(allocator, images.items[2], makeHashImages));
 
     var state = State.init(images.items);
 
@@ -181,7 +181,7 @@ fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []Imag
         fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 }
 
-// updates the images' display attributes
+// updates the images' attributes for display
 fn updateImages(images: []Image) void {
     var x_offset: f32 = 0;
     for (images) |*image| {
@@ -196,10 +196,22 @@ fn updateImages(images: []Image) void {
 
 // creates a copy of the image set and applies a transformation, to be displayed
 fn applyStep(allocator: std.mem.Allocator, images: []Image, transform: *const fn ([]Image) void) []Image {
-    const copy = allocator.dupe(Image, images) catch |err|
+    const copy = allocator.alloc(Image, images.len) catch |err|
         fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 
+    // Deep copy each image
+    for (images, 0..) |img, i| {
+        // Copy the image struct
+        copy[i] = img;
+        copy[i].rl_image = img.rl_image.copy();
+
+        // Create a new texture from the copied image
+        copy[i].texture = rl.loadTextureFromImage(copy[i].rl_image) catch |err|
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ copy[i].path, @errorName(err) });
+    }
+
     transform(copy);
+    updateImages(copy);
     return copy;
 }
 
@@ -210,17 +222,14 @@ fn applyStep(allocator: std.mem.Allocator, images: []Image, transform: *const fn
 // aHash steps
 // - [x]reduce size to an 8x8 square
 // - [x]convert picture to grayscale
-// - [ ]set bits of a 64-bit integer based on whether the pixel is above or below the mean
+// - [x]set bits of a 64-bit integer based on whether the pixel is above or below the mean
 
 fn reduceSize(images: []Image) void {
     for (images) |*image| {
         image.rl_image.resize(8, 8);
-        // image.rl_image.resizeNN(400, 400);
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
             fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
-
-    updateImages(images);
 }
 
 fn convertToGrayscale(images: []Image) void {
@@ -231,31 +240,40 @@ fn convertToGrayscale(images: []Image) void {
     }
 }
 
-fn computeBits(grayscale_images: []Image) void {
-    for (grayscale_images) |*grayscale_image| {
-        const num_pixels: usize = @intCast(grayscale_image.rl_image.width * grayscale_image.rl_image.height);
+fn makeHashImages(grayscale_images: []Image) void {
+    var hashes: [128]u64 = undefined;
+    const new_hashes = computeHashes(grayscale_images, hashes[0..grayscale_images.len]);
+    const num_pixels = 64;
+    const bit: u64 = 1;
+    for (new_hashes, 0..) |hash, i| {
+        var grayscale_image = &grayscale_images[i];
+        const data: []u8 = @as([*]u8, @ptrCast(grayscale_image.rl_image.data))[0..num_pixels];
+        for (0..num_pixels) |j| {
+            data[j] = if (((bit << @as(u6, @truncate(j))) & hash) > 0) 255 else 0;
+        }
+
+        grayscale_image.texture = rl.loadTextureFromImage(grayscale_image.rl_image) catch |err|
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ grayscale_image.path, @errorName(err) });
+    }
+}
+
+fn computeHashes(grayscale_images: []Image, hashes: []u64) []u64 {
+    const bit: u64 = 1;
+    const num_pixels = 64;
+    for (grayscale_images, 0..) |*grayscale_image, i| {
+        std.debug.assert(grayscale_image.rl_image.width * grayscale_image.rl_image.height == num_pixels);
         const data: []u8 = @as([*]u8, @ptrCast(grayscale_image.rl_image.data))[0..num_pixels];
 
         var sum: u32 = 0;
         for (data) |byte| sum += byte;
         const mean: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(num_pixels));
 
-        var new_data: [4096]u8 = undefined;
-        for (data, 0..) |byte, i|
-            new_data[i] = if (@as(f32, @floatFromInt(byte)) > mean) 255 else 0;
-
-        const new_image: rl.Image = .{
-            .data = @ptrCast(new_data[0..num_pixels].ptr),
-            .width = grayscale_image.rl_image.width,
-            .height = grayscale_image.rl_image.height,
-            .mipmaps = grayscale_image.rl_image.mipmaps,
-            .format = grayscale_image.rl_image.format,
-        };
-
-        grayscale_image.rl_image = new_image;
-        grayscale_image.texture = rl.loadTextureFromImage(grayscale_image.rl_image) catch |err|
-            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ grayscale_image.path, @errorName(err) });
+        hashes[i] = 0;
+        for (data, 0..num_pixels) |byte, j|
+            hashes[i] |= if (@as(f32, @floatFromInt(byte)) > mean) bit << @as(u6, @truncate(j)) else 0;
     }
+
+    return hashes;
 }
 
 fn printMetadata(images: []Image) void {
