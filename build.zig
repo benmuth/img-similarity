@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const raylib_artifact = raylib_dep.artifact("raylib");
 
     const main_step = b.addExecutable(.{
-        .name = "main",
+        .name = "img-similarity",
         .root_module = b.createModule(
             .{
                 .root_source_file = b.path("src/main.zig"),

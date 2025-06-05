@@ -4,17 +4,90 @@ const rl = @import("raylib");
 const width = 1200;
 const height = 800;
 
+const CliMode = enum {
+    gui,
+    show_steps,
+    fast,
+};
+
+const CliArgs = struct {
+    mode: CliMode = .gui,
+    directory: []const u8 = "test-images-1",
+    help: bool = false,
+};
+
+fn parseArgs(allocator: std.mem.Allocator) !CliArgs {
+    var args = CliArgs{};
+    var arg_iter = std.process.args();
+    _ = arg_iter.skip(); // skip program name
+
+    while (arg_iter.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            args.help = true;
+        } else if (std.mem.eql(u8, arg, "--show-steps") or std.mem.eql(u8, arg, "-s")) {
+            args.mode = .show_steps;
+        } else if (std.mem.eql(u8, arg, "--fast") or std.mem.eql(u8, arg, "-f")) {
+            args.mode = .fast;
+        } else if (std.mem.eql(u8, arg, "--dir") or std.mem.eql(u8, arg, "-d")) {
+            if (arg_iter.next()) |dir_path| {
+                args.directory = try allocator.dupe(u8, dir_path);
+            } else {
+                fatal(.cli, "Missing directory path after {s}", .{arg});
+            }
+        } else {
+            fatal(.cli, "Unknown argument: {s}", .{arg});
+        }
+    }
+
+    return args;
+}
+
+fn printHelp() void {
+    std.debug.print(
+        \\Usage: img-similarity [OPTIONS]
+        \\
+        \\Options:
+        \\  -d, --dir <PATH>     Directory containing images to process (default: test-images-1)
+        \\  -s, --show-steps     Show transformation steps using GUI (for debugging)
+        \\  -f, --fast           Fast hashing without GUI display (for speed)
+        \\  -h, --help           Show this help message
+        \\
+        \\Examples:
+        \\  img-similarity                          # GUI mode (default)
+        \\  img-similarity --fast --dir ./photos   # Fast CLI hashing
+        \\  img-similarity --show-steps             # GUI with current directory
+        \\
+    , .{});
+}
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    const args = parseArgs(allocator) catch |err| {
+        fatal(.cli, "Failed to parse arguments: {s}", .{@errorName(err)});
+    };
+
+    if (args.help) {
+        printHelp();
+        return;
+    }
+
+    switch (args.mode) {
+        .gui => try runGuiMode(allocator, args.directory),
+        .show_steps => try runShowStepsMode(allocator, args.directory),
+        .fast => try runFastMode(allocator, args.directory),
+    }
+}
+
+fn runGuiMode(allocator: std.mem.Allocator, directory: []const u8) !void {
     rl.initWindow(width, height, "Similar images");
     defer rl.closeWindow();
 
     rl.setTargetFPS(60);
 
-    const paths_1 = pathsFromDir(allocator, "test-images-1");
+    const paths_1 = pathsFromDir(allocator, directory);
 
     var images = std.ArrayListUnmanaged([]Image).empty;
 
@@ -55,6 +128,74 @@ pub fn main() !void {
 
         drawImageSet(state.images[state.set_idx], state.images[state.set_idx][state.image_idx].x);
     }
+}
+
+fn runShowStepsMode(allocator: std.mem.Allocator, directory: []const u8) !void {
+    // Same as GUI mode - shows transformations with Raylib
+    try runGuiMode(allocator, directory);
+}
+
+fn runFastMode(allocator: std.mem.Allocator, directory: []const u8) !void {
+    const paths = pathsFromDir(allocator, directory);
+    const hashes = try computeImageHashes(allocator, paths);
+
+    for (paths, hashes) |path, hash| {
+        std.debug.print("{s}: {x:0>16}\n", .{ path, hash });
+    }
+}
+
+fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) ![]u64 {
+    // Load images without creating textures
+    var rl_images = std.ArrayListUnmanaged(rl.Image).empty;
+    defer {
+        for (rl_images.items) |img| {
+            img.unload();
+        }
+        rl_images.deinit(allocator);
+    }
+
+    // Load all images
+    for (paths) |path| {
+        const rl_image = rl.Image.init(path) catch |err|
+            fatal(.bad_file, "Failed to load image {s}: {s}", .{ path, @errorName(err) });
+
+        if (!rl.isImageValid(rl_image)) {
+            fatal(.bad_file, "invalid path: {s}", .{path});
+        }
+
+        try rl_images.append(allocator, rl_image);
+    }
+
+    // Apply transformations in sequence (same as GUI pipeline)
+    // Step 1: Reduce size to 8x8
+    for (rl_images.items) |*img| {
+        img.resize(8, 8);
+    }
+
+    // Step 2: Convert to grayscale
+    for (rl_images.items) |*img| {
+        img.grayscale();
+    }
+
+    // Step 3: Compute hashes from the processed images
+    var hashes = try allocator.alloc(u64, rl_images.items.len);
+    const bit: u64 = 1;
+    const num_pixels = 64;
+
+    for (rl_images.items, 0..) |*img, i| {
+        std.debug.assert(img.width * img.height == num_pixels);
+        const data: []u8 = @as([*]u8, @ptrCast(img.data))[0..num_pixels];
+
+        var sum: u32 = 0;
+        for (data) |byte| sum += byte;
+        const mean: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(num_pixels));
+
+        hashes[i] = 0;
+        for (data, 0..num_pixels) |byte, j|
+            hashes[i] |= if (@as(f32, @floatFromInt(byte)) > mean) bit << @as(u6, @truncate(j)) else 0;
+    }
+
+    return hashes;
 }
 
 const State = struct {
