@@ -1,6 +1,6 @@
 const std = @import("std");
 const rl = @import("raylib");
-const main = @import("main.zig");
+const fatal = @import("main.zig").fatal;
 
 /// An image to be displayed in the window
 pub const Image = struct {
@@ -19,14 +19,20 @@ pub const Image = struct {
     // the amount each image should be scaled by to have it fit in the window
     scale: f32,
 
-    pub fn init(image: rl.Image, path: []const u8, x: f32) Image {
+    pub fn init(image: *rl.Image, path: []const u8, x: f32) Image {
+        // resize before loading texture
+        const scale = calcImageScale(image.*);
+        const new_width: f32 = @as(f32, @floatFromInt(image.width)) * scale;
+        const new_height: f32 = @as(f32, @floatFromInt(image.height)) * scale;
+        image.resizeNN(@intFromFloat(new_width), @intFromFloat(new_height));
+
         return .{
-            .rl_image = image,
+            .rl_image = image.*,
             .path = path,
             .x = x,
-            .texture = rl.loadTextureFromImage(image) catch |err|
-                main.fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ path, @errorName(err) }),
-            .scale = calcImageScale(image),
+            .texture = rl.loadTextureFromImage(image.*) catch |err|
+                fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ path, @errorName(err) }),
+            .scale = 1,
         };
     }
 };
@@ -54,19 +60,19 @@ pub fn pathsFromDir(allocator: std.mem.Allocator, dir_name: []const u8) [][:0]co
     var paths = std.ArrayListUnmanaged([:0]const u8).empty;
 
     const dir = std.fs.cwd().openDir(dir_name, .{ .iterate = true }) catch |err|
-        main.fatal(.bad_file, "Failed to open dir {s}: {s}\n", .{ dir_name, @errorName(err) });
+        fatal(.bad_file, "Failed to open dir {s}: {s}\n", .{ dir_name, @errorName(err) });
 
     var walker = dir.walk(allocator) catch |err|
-        main.fatal(.bad_file, "Failed to walk dir {s}: {s}\n", .{ dir_name, @errorName(err) });
+        fatal(.bad_file, "Failed to walk dir {s}: {s}\n", .{ dir_name, @errorName(err) });
     defer walker.deinit();
 
-    while (walker.next() catch |err| main.fatal(
+    while (walker.next() catch |err| fatal(
         .bad_file,
         "Failed to iterate through dir {s}: {s}",
         .{ dir_name, @errorName(err) },
     )) |entry| {
         const real_path = entry.dir.realpathAlloc(allocator, entry.path) catch |err|
-            main.fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+            fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 
         if (!supportedFormat(real_path)) {
             std.log.info("Unsupported format: skipping {s}", .{real_path});
@@ -74,14 +80,18 @@ pub fn pathsFromDir(allocator: std.mem.Allocator, dir_name: []const u8) [][:0]co
         }
 
         const real_path_z = allocator.dupeZ(u8, real_path) catch |err|
-            main.fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+            fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 
         paths.append(allocator, real_path_z) catch |err|
-            main.fatal(.no_space_left, "Faild to append path {s} to list: {s}", .{ real_path_z, @errorName(err) });
+            fatal(.no_space_left, "Faild to append path {s} to list: {s}", .{ real_path_z, @errorName(err) });
+    }
+
+    if (paths.items.len == 0) {
+        fatal(.bad_file, "No valid paths in {s}", .{dir_name});
     }
 
     return paths.toOwnedSlice(allocator) catch |err|
-        main.fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+        fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 }
 
 pub fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []Image {
@@ -91,31 +101,22 @@ pub fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []
     for (paths) |path| {
         std.debug.print("loading image from path: {s}\n", .{path});
 
-        const rl_image = rl.Image.init(path) catch |err|
-            main.fatal(.bad_file, "Failed to load image {s}: {s}", .{ path, @errorName(err) });
+        var rl_image = rl.Image.init(path) catch |err|
+            fatal(.bad_file, "Failed to load image {s}: {s}", .{ path, @errorName(err) });
 
         if (rl.isImageValid(rl_image)) {
-            const image = Image.init(rl_image, path, initial_x);
+            const image = Image.init(&rl_image, path, initial_x);
             images.append(allocator, image) catch |err|
-                main.fatal(.no_space_left, "Failed to append image to list: {s}", .{@errorName(err)});
+                fatal(.no_space_left, "Failed to append image to list: {s}", .{@errorName(err)});
 
-            initial_x += @as(f32, @floatFromInt(rl_image.width)) * image.scale;
+            initial_x += @as(f32, @floatFromInt(image.rl_image.width));
         } else {
-            main.fatal(.bad_file, "invalid path: {s}", .{path});
+            fatal(.bad_file, "invalid path: {s}", .{path});
         }
     }
 
     return images.toOwnedSlice(allocator) catch |err|
-        main.fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
-}
-
-pub fn fitToWindow(images: []Image) void {
-    for (images) |*image| {
-        const new_width: f32 = @as(f32, @floatFromInt(image.rl_image.width)) * image.scale;
-        const new_height: f32 = @as(f32, @floatFromInt(image.rl_image.height)) * image.scale;
-        image.rl_image.resizeNN(@intFromFloat(new_width), @intFromFloat(new_height));
-    }
-    updateImages(images);
+        fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 }
 
 // updates the images' attributes for display
@@ -124,7 +125,7 @@ pub fn updateImages(images: []Image) void {
     for (images) |*image| {
         image.x = x_offset;
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
-            main.fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
 
         image.scale = calcImageScale(image.rl_image);
         x_offset += (@as(f32, @floatFromInt(image.texture.width)) * image.scale);
@@ -134,7 +135,7 @@ pub fn updateImages(images: []Image) void {
 // creates a copy of the image set and applies a transformation, to be displayed
 pub fn applyStep(allocator: std.mem.Allocator, images: []Image, transform: *const fn ([]Image) void) []Image {
     const copy = allocator.alloc(Image, images.len) catch |err|
-        main.fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+        fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
 
     // Deep copy each image
     for (images, 0..) |img, i| {
@@ -144,7 +145,7 @@ pub fn applyStep(allocator: std.mem.Allocator, images: []Image, transform: *cons
 
         // Create a new texture from the copied image
         copy[i].texture = rl.loadTextureFromImage(copy[i].rl_image) catch |err|
-            main.fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ copy[i].path, @errorName(err) });
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ copy[i].path, @errorName(err) });
     }
 
     transform(copy);
@@ -183,10 +184,10 @@ pub fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) !
     // Load all images
     for (paths) |path| {
         const rl_image = rl.Image.init(path) catch |err|
-            main.fatal(.bad_file, "Failed to load image {s}: {s}", .{ path, @errorName(err) });
+            fatal(.bad_file, "Failed to load image {s}: {s}", .{ path, @errorName(err) });
 
         if (!rl.isImageValid(rl_image)) {
-            main.fatal(.bad_file, "invalid path: {s}", .{path});
+            fatal(.bad_file, "invalid path: {s}", .{path});
         }
 
         try rl_images.append(allocator, rl_image);
@@ -231,11 +232,11 @@ pub fn computeHashes(grayscale_images: []Image, hashes: []u64) []u64 {
 // Image transformation functions for GUI pipeline
 //
 
-pub fn reduceSize(images: []Image) void {
+pub fn reduceTo8x8(images: []Image) void {
     for (images) |*image| {
         image.rl_image.resizeNN(8, 8);
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
-            main.fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
 }
 
@@ -243,7 +244,7 @@ pub fn convertToGrayscale(images: []Image) void {
     for (images) |*image| {
         image.rl_image.grayscale();
         image.texture = rl.loadTextureFromImage(image.rl_image) catch |err|
-            main.fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ image.path, @errorName(err) });
     }
 }
 
@@ -260,7 +261,7 @@ pub fn makeHashImages(grayscale_images: []Image) void {
         }
 
         grayscale_image.texture = rl.loadTextureFromImage(grayscale_image.rl_image) catch |err|
-            main.fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ grayscale_image.path, @errorName(err) });
+            fatal(.bad_file, "Failed to load texture from image {s}: {s}", .{ grayscale_image.path, @errorName(err) });
     }
 }
 

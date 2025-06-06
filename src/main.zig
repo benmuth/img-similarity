@@ -56,8 +56,8 @@ fn printHelp() void {
         \\
         \\Examples:
         \\  img-similarity                          # GUI mode (default)
-        \\  img-similarity --fast --dir ./photos   # Fast CLI hashing
-        \\  img-similarity --show-steps             # GUI with current directory
+        \\  img-similarity --fast --dir ./photos    # Fast image similarity detection
+        \\  img-similarity --show-steps             # GUI showing image transforms for hashing
         \\
     , .{});
 }
@@ -84,7 +84,7 @@ pub fn main() !void {
 }
 
 fn runGuiMode(allocator: std.mem.Allocator, directory: []const u8) !void {
-    std.debug.print("running GUI for directory: {s}\n", .{directory});
+    std.log.info("showing results for directory: {s}\n", .{directory});
 
     rl.initWindow(width, height, "Similar images");
     defer rl.closeWindow();
@@ -92,18 +92,13 @@ fn runGuiMode(allocator: std.mem.Allocator, directory: []const u8) !void {
     rl.setTargetFPS(60);
 
     const paths = image.pathsFromDir(allocator, directory);
-    if (paths.len == 0) {
-        fatal(.bad_file, "No valid paths in {s}", .{directory});
-    }
-
     const images = image.imageSetFromPaths(allocator, paths);
-    image.fitToWindow(images);
 
     var image_sets = std.ArrayListUnmanaged([]image.Image).empty;
     try image_sets.append(allocator, images);
     try image_sets.append(
         allocator,
-        image.applyStep(allocator, image_sets.items[0], image.reduceSize),
+        image.applyStep(allocator, image_sets.items[0], image.reduceTo8x8),
     );
     try image_sets.append(
         allocator,
