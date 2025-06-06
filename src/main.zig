@@ -94,14 +94,16 @@ fn runGuiMode(allocator: std.mem.Allocator, directory: []const u8) !void {
         fatal(.bad_file, "No valid paths in {s}", .{directory});
     }
 
-    var images = std.ArrayListUnmanaged([]Image).empty;
+    const images = imageSetFromPaths(allocator, paths);
+    fitToWindow(images);
 
-    try images.append(allocator, imageSetFromPaths(allocator, paths));
-    try images.append(allocator, applyStep(allocator, images.items[0], reduceSize));
-    try images.append(allocator, applyStep(allocator, images.items[1], convertToGrayscale));
-    try images.append(allocator, applyStep(allocator, images.items[2], makeHashImages));
+    var image_sets = std.ArrayListUnmanaged([]Image).empty;
+    try image_sets.append(allocator, images);
+    try image_sets.append(allocator, applyStep(allocator, image_sets.items[0], reduceSize));
+    try image_sets.append(allocator, applyStep(allocator, image_sets.items[1], convertToGrayscale));
+    try image_sets.append(allocator, applyStep(allocator, image_sets.items[2], makeHashImages));
 
-    var state = State.init(images.items);
+    var state = State.init(image_sets.items);
 
     while (!rl.windowShouldClose()) {
         // update
@@ -334,6 +336,15 @@ fn imageSetFromPaths(allocator: std.mem.Allocator, paths: [][:0]const u8) []Imag
 
     return images.toOwnedSlice(allocator) catch |err|
         fatal(.no_space_left, "Failed to allocate: {s}", .{@errorName(err)});
+}
+
+fn fitToWindow(images: []Image) void {
+    for (images) |*image| {
+        const new_width: f32 = @as(f32, @floatFromInt(image.rl_image.width)) * image.scale;
+        const new_height: f32 = @as(f32, @floatFromInt(image.rl_image.height)) * image.scale;
+        image.rl_image.resizeNN(@intFromFloat(new_width), @intFromFloat(new_height));
+    }
+    updateImages(images);
 }
 
 // updates the images' attributes for display
