@@ -2,6 +2,9 @@ const std = @import("std");
 const rl = @import("raylib");
 const fatal = @import("main.zig").fatal;
 
+const width = 1200;
+const height = 800;
+
 /// An image to be displayed in the window
 pub const Image = struct {
     // the underlying Raylib image data
@@ -38,9 +41,6 @@ pub const Image = struct {
 };
 
 pub fn calcImageScale(image: rl.Image) f32 {
-    const width = 1200;
-    const height = 800;
-
     var scale: f32 = 1;
     if (image.width > image.height) {
         // scale to width
