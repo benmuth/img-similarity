@@ -7,13 +7,13 @@ const width = 1200;
 const height = 800;
 
 const CliMode = enum {
-    gui,
-    show_steps,
-    fast,
+    similarity,
+    transforms,
+    cli,
 };
 
 const CliArgs = struct {
-    mode: CliMode = .gui,
+    mode: CliMode = .similarity,
     directory: []const u8 = "test-images-1",
     help: bool = false,
 };
@@ -26,10 +26,10 @@ fn parseArgs(allocator: std.mem.Allocator) !CliArgs {
     while (arg_iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             args.help = true;
-        } else if (std.mem.eql(u8, arg, "--show-steps") or std.mem.eql(u8, arg, "-s")) {
-            args.mode = .show_steps;
+        } else if (std.mem.eql(u8, arg, "--show-transforms") or std.mem.eql(u8, arg, "-s")) {
+            args.mode = .transforms;
         } else if (std.mem.eql(u8, arg, "--fast") or std.mem.eql(u8, arg, "-f")) {
-            args.mode = .fast;
+            args.mode = .cli;
         } else if (std.mem.eql(u8, arg, "--dir") or std.mem.eql(u8, arg, "-d")) {
             if (arg_iter.next()) |dir_path| {
                 args.directory = try allocator.dupe(u8, dir_path);
@@ -49,15 +49,15 @@ fn printHelp() void {
         \\Usage: img-similarity [OPTIONS]
         \\
         \\Options:
-        \\  -d, --dir <PATH>     Directory containing images to process (default: test-images-1)
-        \\  -s, --show-steps     Show transformation steps using GUI (for debugging)
-        \\  -f, --fast           Fast hashing without GUI display (for speed)
-        \\  -h, --help           Show this help message
+        \\  -d, --dir <PATH>          Directory containing images to process
+        \\  -s, --show-transforms     Show process to calculate hash of a single image
+        \\  -f, --fast                Fast hashing without GUI display
+        \\  -h, --help                Show this help message
         \\
         \\Examples:
-        \\  img-similarity                          # GUI mode (default)
-        \\  img-similarity --fast --dir ./photos    # Fast image similarity detection
-        \\  img-similarity --show-steps             # GUI showing image transforms for hashing
+        \\  img-similarity                          # Image similarity mode with GUI (default)
+        \\  img-similarity --fast --dir ./photos    # Print results to command line, no GUI
+        \\  img-similarity --show-transforms        # GUI showing image transforms for hashing
         \\
     , .{});
 }
@@ -77,13 +77,17 @@ pub fn main() !void {
     }
 
     switch (args.mode) {
-        .gui => try runGuiMode(allocator, args.directory),
-        .show_steps => try runShowStepsMode(allocator, args.directory),
-        .fast => try runFastMode(allocator, args.directory),
+        .similarity => runGui(allocator, args.directory, image.imageSetsBySimilarity),
+        .transforms => runGui(allocator, args.directory, image.imageSetsTransformation),
+        .cli => runFastMode(allocator, args.directory),
     }
 }
 
-fn runGuiMode(allocator: std.mem.Allocator, directory: []const u8) !void {
+fn runGui(
+    allocator: std.mem.Allocator,
+    directory: []const u8,
+    create_sets: fn (std.mem.Allocator, []const u8) [][]image.Image,
+) void {
     std.log.info("showing results for directory: {s}\n", .{directory});
 
     rl.initWindow(width, height, "Similar images");
@@ -91,25 +95,12 @@ fn runGuiMode(allocator: std.mem.Allocator, directory: []const u8) !void {
 
     rl.setTargetFPS(60);
 
-    const paths = image.pathsFromDir(allocator, directory);
-    const images = image.imageSetFromPaths(allocator, paths);
+    // free all the intermediate stuff allocated during image creation
+    var temp_arena = std.heap.ArenaAllocator.init(allocator);
+    const image_sets = create_sets(temp_arena.allocator(), directory);
+    temp_arena.deinit();
 
-    var image_sets = std.ArrayListUnmanaged([]image.Image).empty;
-    try image_sets.append(allocator, images);
-    try image_sets.append(
-        allocator,
-        image.applyStep(allocator, image_sets.items[0], image.reduceTo8x8),
-    );
-    try image_sets.append(
-        allocator,
-        image.applyStep(allocator, image_sets.items[1], image.convertToGrayscale),
-    );
-    try image_sets.append(
-        allocator,
-        image.applyStep(allocator, image_sets.items[2], image.makeHashImages),
-    );
-
-    var state = ui.State.init(image_sets.items);
+    var state = ui.State.init(image_sets);
 
     while (!rl.windowShouldClose()) {
         // update
@@ -143,18 +134,13 @@ fn runGuiMode(allocator: std.mem.Allocator, directory: []const u8) !void {
     }
 }
 
-fn runShowStepsMode(allocator: std.mem.Allocator, directory: []const u8) !void {
-    // Same as GUI mode - shows transformations with Raylib
-    try runGuiMode(allocator, directory);
-}
-
-fn runFastMode(allocator: std.mem.Allocator, directory: []const u8) !void {
+fn runFastMode(allocator: std.mem.Allocator, directory: []const u8) void {
     const paths = image.pathsFromDir(allocator, directory);
     if (paths.len == 0) {
         fatal(.bad_file, "No valid paths in {s}", .{directory});
     }
 
-    const hashes = try image.computeImageHashes(allocator, paths);
+    const hashes = image.computeImageHashes(allocator, paths);
 
     for (paths, hashes) |path, hash| {
         std.debug.print("{s}: {x:0>16}\n", .{ path, hash });

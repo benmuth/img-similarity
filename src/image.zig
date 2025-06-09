@@ -154,24 +154,24 @@ pub fn applyStep(allocator: std.mem.Allocator, images: []Image, transform: *cons
 }
 
 // Core hash computation function - works with raw grayscale image data
-fn computeHashFromData(data: []const u8) u64 {
+fn computeHashFromData(pixel_data: []const u8) u64 {
     const bit: u64 = 1;
     const num_pixels = 64;
-    std.debug.assert(data.len == num_pixels);
+    std.debug.assert(pixel_data.len == num_pixels);
 
     var sum: u32 = 0;
-    for (data) |byte| sum += byte;
+    for (pixel_data) |byte| sum += byte;
     const mean: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(num_pixels));
 
     var hash: u64 = 0;
-    for (data, 0..num_pixels) |byte, j|
+    for (pixel_data, 0..num_pixels) |byte, j|
         hash |= if (@as(f32, @floatFromInt(byte)) > mean) bit << @as(u6, @truncate(j)) else 0;
 
     return hash;
 }
 
-// Compute hashes for fast mode (works directly with rl.Image)
-pub fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) ![]u64 {
+// Compute hashes
+pub fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) []u64 {
     // Load images without creating textures
     var rl_images = std.ArrayListUnmanaged(rl.Image).empty;
     defer {
@@ -180,7 +180,6 @@ pub fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) !
         }
         rl_images.deinit(allocator);
     }
-
     // Load all images
     for (paths) |path| {
         const rl_image = rl.Image.init(path) catch |err|
@@ -190,7 +189,8 @@ pub fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) !
             fatal(.bad_file, "invalid path: {s}", .{path});
         }
 
-        try rl_images.append(allocator, rl_image);
+        rl_images.append(allocator, rl_image) catch |err|
+            fatal(.no_space_left, "Failed to append image to list: {s}", .{@errorName(err)});
     }
 
     // Reduce size to 8x8
@@ -204,7 +204,8 @@ pub fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) !
     }
 
     // Compute hashes from the processed images
-    var hashes = try allocator.alloc(u64, rl_images.items.len);
+    var hashes = allocator.alloc(u64, rl_images.items.len) catch |err|
+        fatal(.no_space_left, "Failed to append image to list: {s}", .{@errorName(err)});
     const num_pixels = 64;
 
     for (rl_images.items, 0..) |*img, i| {
@@ -216,7 +217,7 @@ pub fn computeImageHashes(allocator: std.mem.Allocator, paths: [][:0]const u8) !
     return hashes;
 }
 
-// Compute hashes for GUI mode (works with Image structs)
+// Compute hashes as a step for transform mode
 pub fn computeHashes(grayscale_images: []Image, hashes: []u64) []u64 {
     const num_pixels = 64;
     for (grayscale_images, 0..) |*grayscale_image, i| {
@@ -226,6 +227,86 @@ pub fn computeHashes(grayscale_images: []Image, hashes: []u64) []u64 {
     }
 
     return hashes;
+}
+
+pub fn imageSetsTransformation(allocator: std.mem.Allocator, directory: []const u8) [][]Image {
+    const paths = pathsFromDir(allocator, directory);
+    const images = imageSetFromPaths(allocator, paths);
+
+    var image_sets = std.ArrayListUnmanaged([]Image).empty;
+
+    image_sets.append(allocator, images) catch |err|
+        fatal(.no_space_left, "Failed to append image set to list: {s}", .{@errorName(err)});
+
+    image_sets.append(
+        allocator,
+        applyStep(allocator, image_sets.items[0], reduceTo8x8),
+    ) catch |err|
+        fatal(.no_space_left, "Failed to append image set to list: {s}", .{@errorName(err)});
+
+    image_sets.append(
+        allocator,
+        applyStep(allocator, image_sets.items[1], convertToGrayscale),
+    ) catch |err|
+        fatal(.no_space_left, "Failed to append image set to list: {s}", .{@errorName(err)});
+
+    image_sets.append(
+        allocator,
+        applyStep(allocator, image_sets.items[2], makeHashImages),
+    ) catch |err|
+        fatal(.no_space_left, "Failed to append image set to list: {s}", .{@errorName(err)});
+
+    return image_sets.toOwnedSlice(allocator) catch |err|
+        fatal(.no_space_left, "Failed to allocate list: {s}", .{@errorName(err)});
+}
+
+pub fn imageSetsBySimilarity(allocator: std.mem.Allocator, directory: []const u8) [][]Image {
+    const paths = pathsFromDir(allocator, directory);
+    const hashes = computeImageHashes(allocator, paths);
+
+    // NOTE: look into gray code sorting to avoid O(n^2) complexity. Maybe reserve it for large
+    // directories. Need to do measurements.
+
+    const hammingThreshold = 3;
+
+    var path_groups = std.ArrayListUnmanaged([][:0]const u8).empty;
+    var used = allocator.alloc(bool, hashes.len) catch |err|
+        fatal(.no_space_left, "Failed to allocate list: {s}", .{@errorName(err)});
+    for (0..used.len) |i| used[i] = false;
+
+    for (hashes, 0..) |hash_1, i| {
+        if (used[i]) continue;
+
+        var path_group = std.ArrayListUnmanaged([:0]const u8).empty;
+        path_group.append(allocator, paths[i]) catch |err|
+            fatal(.no_space_left, "Failed to append path to list: {s}", .{@errorName(err)});
+
+        used[i] = true;
+
+        for (hashes[1..], 1..hashes.len) |hash_2, j| {
+            if (used[j]) continue;
+
+            if (@popCount(hash_1 ^ hash_2) < hammingThreshold) {
+                used[j] = true;
+
+                path_group.append(allocator, paths[j]) catch |err|
+                    fatal(.no_space_left, "Failed to append path to list: {s}", .{@errorName(err)});
+            }
+        }
+        path_groups.append(allocator, path_group.items) catch |err|
+            fatal(.no_space_left, "Failed to append path to list: {s}", .{@errorName(err)});
+    }
+
+    var image_sets = std.ArrayListUnmanaged([]Image).empty;
+    for (path_groups.items) |path_group| {
+        if (path_group.len < 2) continue; // only keep sets with duplicates
+        const image_set = imageSetFromPaths(allocator, path_group);
+        image_sets.append(allocator, image_set) catch |err|
+            fatal(.no_space_left, "Failed to append image set to list: {s}", .{@errorName(err)});
+    }
+
+    return image_sets.toOwnedSlice(allocator) catch |err|
+        fatal(.no_space_left, "Failed to allocate list: {s}", .{@errorName(err)});
 }
 
 //
